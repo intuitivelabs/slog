@@ -113,7 +113,7 @@ func (l Log) GetLevel() LogLevel {
 // Can be used to quickly check if logging is enabled, before calling
 // a logging function (thus avoiding unneeded parameter evaluation).
 func (l Log) L(lev LogLevel) bool {
-	return l.GetLevel() > lev
+	return l.GetLevel() >= lev
 }
 
 // GetOpts returns the current log options.
