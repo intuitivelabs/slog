@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 var BuildTags []string
 
@@ -40,6 +40,7 @@ const (
 
 // log levels
 const (
+	LMIN    LogLevel = -3
 	LBUG    LogLevel = -3
 	LCRIT   LogLevel = -2
 	LERR    LogLevel = -1
@@ -50,6 +51,26 @@ const (
 	LMAX    LogLevel = 3
 )
 
+// level names, keep in sync with the above Lxx constants
+var levNames = [...]string{
+	"BUG",
+	"CRIT",
+	"ERR",
+	"WARN",
+	"NOTICE",
+	"INFO",
+	"DBG",
+}
+
+// LevelName returns the log level name as string.
+// On error it returns the empty string.
+func LevelName(l LogLevel) string {
+	if l < LMIN || l > LMAX {
+		return ""
+	}
+	return levNames[l-LMIN]
+}
+
 // log options
 const (
 	LOptNone    LogOptions = 0
@@ -59,6 +80,37 @@ const (
 	LbackTraceS LogOptions = 1 << 3 // short
 	LbackTraceL LogOptions = 1 << 4 // long
 )
+
+var optNames = [...]string{
+	"none",
+	"location_short",
+	"location_long",
+	"timestamp",
+	"backtrace_short",
+	"backtrace_long",
+}
+
+// LogOptString returns the log options as string (seprated by "|").
+// It returns the string representation of the options and a boolean
+// specifying if all the options are known (true) or if an error was
+// encountered (false)
+func LogOptString(o LogOptions) (string, bool) {
+	s := ""
+	for i := 0; o != 0; i++ {
+		if o&1 != 0 {
+			if (i + 1) >= len(optNames) {
+				return s, false
+			}
+			if len(s) == 0 {
+				s = optNames[i+1]
+			} else {
+				s = s + "|" + optNames[i+1]
+			}
+		}
+		o >>= 1
+	}
+	return s, true
+}
 
 // Log is a simple logger, keeping all its configuration inside
 // an uint64.
