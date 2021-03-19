@@ -9,6 +9,7 @@
 package slog
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -21,6 +22,17 @@ import (
 const Version = "0.1.1"
 
 var BuildTags []string
+
+var bufPool bpool
+
+func init() {
+	if !bufPool.init() {
+		panic("buffer pool init failed")
+	}
+	if bufPool.free() != BufPoolSz {
+		panic("buffer pool init - unexpected")
+	}
+}
 
 const (
 	logMaskLevel   = 0xff
@@ -225,51 +237,101 @@ func (l Log) LLog(lev LogLevel, callersSkip int, prefix string,
 	if lev > l.GetLevel() {
 		return
 	}
+	// acquire string buf
+	sb := bufPool.pop()
+	if sb == nil {
+		// failed (all used)
+		sb = &bytes.Buffer{}
+		sb.Grow(BufSz)
+	}
+
 	if l.GetOpt()&LtimeStamp != 0 {
-		prefix = time.Now().Format("2006/01/02T15:04:05.99") + ":" + prefix
+		sb.WriteString(time.Now().Format("2006/01/02T15:04:05.99"))
+		sb.WriteByte(':')
+		sb.WriteString(prefix)
+		//prefix = time.Now().Format("2006/01/02T15:04:05.99") + ":" + prefix
 	}
-	if l.GetOpt()&(LlocInfoS|LlocInfoL) != 0 {
-		// add location info
-		if _, file, line, ok := runtime.Caller(callersSkip + 1); ok {
-			if l.GetOpt()&LlocInfoS != 0 {
-				file = getTrailingPath(file, 2)
-			}
-			prefix += file + ":" + strconv.Itoa(line) + ": "
-		}
-	}
-	if l.GetOpt()&(LbackTraceS|LbackTraceL) != 0 {
+	if l.GetOpt()&(LlocInfoS|LlocInfoL|LbackTraceS|LbackTraceL) != 0 {
 		var pc [10]uintptr
+		var frames *runtime.Frames
+		var frame runtime.Frame
+		var more bool // more frames
+
 		n := runtime.Callers(callersSkip+2, pc[:])
 		if n > 0 {
-			frames := runtime.CallersFrames(pc[:n])
-			prefix += "["
-			for {
-				frame, cont := frames.Next()
-				function := frame.Function
-				if l.GetOpt()&LbackTraceS != 0 {
-					function = getTrailingPath(frame.Function, 1)
+			// get first frame
+			frames = runtime.CallersFrames(pc[:n])
+			frame, more = frames.Next()
+		}
+		if l.GetOpt()&(LlocInfoS|LlocInfoL) != 0 {
+			if n > 0 {
+				// add location info
+				//if _, file, line, ok := runtime.Caller(callersSkip + 1); ok {
+				file := frame.File
+				line := frame.Line
+				if l.GetOpt()&LlocInfoS != 0 {
+					file = getTrailingPath(file, 2)
 				}
-				file := getTrailingPath(frame.File, 1)
-				prefix += function + "(" + file + ":" +
-					strconv.Itoa(frame.Line) + ")"
-				if !cont {
-					break
-				}
-				prefix += ":"
+				sb.WriteString(file)
+				sb.WriteByte(':')
+				sb.WriteString(strconv.Itoa(line))
+				sb.WriteString(": ")
+				// prefix += file + ":" + strconv.Itoa(line) + ": "
 			}
-			prefix += "]: "
+		}
+		if l.GetOpt()&(LbackTraceS|LbackTraceL) != 0 {
+			if n > 0 {
+				sb.WriteByte('[')
+				// prefix += "["
+				for {
+					function := frame.Function
+					if l.GetOpt()&LbackTraceS != 0 {
+						function = getTrailingPath(frame.Function, 1)
+					}
+					file := getTrailingPath(frame.File, 1)
+					sb.WriteString(function)
+					sb.WriteByte('(')
+					sb.WriteString(file)
+					sb.WriteByte(':')
+					sb.WriteString(strconv.Itoa(frame.Line))
+					sb.WriteByte(')')
+					//prefix += function + "(" + file + ":" +
+					//	strconv.Itoa(frame.Line) + ")"
+					if !more {
+						break
+					}
+					sb.WriteByte(':')
+					//prefix += ":"
+					frame, more = frames.Next()
+				}
+				sb.WriteString("]: ")
+				// prefix += "]: "
+			}
 		}
 	}
+
+	fmt.Fprintf(sb, f, args...)
 
 	switch l.GetLogger() {
 	default:
 		fallthrough
 	case LStdErr:
-		fmt.Fprintf(os.Stderr, prefix+f, args...)
+		sb.WriteTo(os.Stderr)
+		//fmt.Fprintf(os.Stderr, prefix+f, args...)
 	case LStdOut:
-		fmt.Fprintf(os.Stdout, prefix+f, args...)
+		sb.WriteTo(os.Stdout)
+		//fmt.Fprintf(os.Stdout, prefix+f, args...)
 	case LDisabledOut:
 	}
+
+	// put string builder back into the pool (or add it)
+	sb.Reset()
+	if sb.Cap() > MaxBufSz {
+		// too big, free & create new one
+		buf := make([]byte, 0, MaxBufSz)
+		sb = bytes.NewBuffer(buf)
+	}
+	bufPool.push(sb)
 }
 
 // INFOon returns true if logging at LINFO level is enabled.
