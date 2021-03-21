@@ -251,6 +251,7 @@ func (l Log) LLog(lev LogLevel, callersSkip int, prefix string,
 		sb.WriteString(prefix)
 		//prefix = time.Now().Format("2006/01/02T15:04:05.99") + ":" + prefix
 	}
+	sb.WriteString(prefix)
 	if l.GetOpt()&(LlocInfoS|LlocInfoL|LbackTraceS|LbackTraceL) != 0 {
 		var pc [10]uintptr
 		var frames *runtime.Frames
